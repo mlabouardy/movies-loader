@@ -1,0 +1,18 @@
+namespace: 'movies-loader'
+
+metadata: 
+  git:
+    commitId: none
+  jenkins:
+    buildTag: none
+
+services:
+  aws:
+    account: ''
+    region: ''
+  registry:
+    uri: '305929695733.dkr.ecr.eu-west-3.amazonaws.com'
+    secret: ''
+
+deployment:
+  tag: 'develop'
