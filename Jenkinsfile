@@ -17,30 +17,51 @@ node('workers'){
         }
 
         stage('Build'){
-            docker.build(imageName)
+            parallel(
+                'Docker Image': {
+                    docker.build(imageName)
+                },
+                'Helm Chart': {
+                    sh 'helm package chart'
+                }
+            )
         }
 
         stage('Push'){
-            sh "\$(aws ecr get-login --no-include-email --region ${region}) || true"
-            docker.withRegistry("https://${registry}") {
-                docker.image(imageName).push(commitID())
+            parallel(
+                'Docker Image': {
+                    sh "\$(aws ecr get-login --no-include-email --region ${region}) || true"
+                    docker.withRegistry("https://${registry}") {
+                        docker.image(imageName).push(commitID())
 
-                if (env.BRANCH_NAME == 'develop') {
-                    docker.image(imageName).push('develop')
-                }
+                        if (env.BRANCH_NAME == 'develop') {
+                            docker.image(imageName).push('develop')
+                        }
 
-                if (env.BRANCH_NAME == 'preprod') {
-                    docker.image(imageName).push('preprod')
-                }
+                        if (env.BRANCH_NAME == 'preprod') {
+                            docker.image(imageName).push('preprod')
+                        }
 
-                if (env.BRANCH_NAME == 'master') {
-                    docker.image(imageName).push('latest')
+                        if (env.BRANCH_NAME == 'master') {
+                            docker.image(imageName).push('latest')
+                        }
+                    }
+                },
+                'Helm Chart': {
+                    sh 'helm repo index --url https://mlabouardy.github.io/watchlist-charts/ .'
+                    sshagent(['github-ssh']) {
+                        sh 'git clone git@github.com:mlabouardy/watchlist-charts.git'
+                        sh 'mv movies-loader-1.0.0.tgz watchlist-charts'
+                        dir('watchlist-charts'){
+                            sh 'git add index.yaml movies-loader-1.0.0.tgz && git commit -m "movies-loader" && git push origin master'
+                        }
+                    }
                 }
-            }
+            )
         }
 
         stage('Analyze'){
-            def scannedImage = "${registry}/${imageName}:${commitID()} ${workspace}/Dockerfile"
+            def scannedImage = "${registry}/${imageName}:${commitID()}"
             writeFile file: 'images', text: scannedImage
             anchore name: 'images'
         }
@@ -57,11 +78,29 @@ node('workers'){
                 build job: "watchlist-deployment/master"
             }
         }
+
+        stage('Healthcheck'){
+            sh "curl -m ${getUrl()}"
+        }
+
     } catch(e){
         currentBuild.result = 'FAILED'
         throw e
     } finally {
         notifySlack(currentBuild.result)
+    }
+}
+
+
+
+def getUrl(){
+    switch(env.BRANCH_NAME){
+        case 'preprod':
+            return 'https://api.staging.internal.foxapi.xyz'
+        case 'master':
+            return 'https://api.production.internal.foxapi.xyz'
+        default:
+            return 'https://api.sandbox.internal.foxapi.xyz'
     }
 }
 
