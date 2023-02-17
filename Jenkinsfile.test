@@ -1,0 +1,108 @@
+def imageName = '3036/movies-loader'
+def registry = 'https://hub.docker.com/repository/docker/3036/pyhtonapp/general'
+def registryCredential = 'dockerhub' 
+
+pipeline {
+    agent any
+    options {
+        skipStagesAfterUnstable()
+    }
+      stages{
+           
+        stage('Unit Tests'){
+            steps{
+                script {
+                    def imageTest= docker.build("${imageName}-test", "-f Dockerfile.test .")
+                    imageTest.inside{
+                        sh "python test_main.py"
+                    }
+                }
+            }
+        }
+           
+        stage('Build') {
+            steps {
+                script {
+                   imageName = docker.build("${imageName}")
+               }
+            }
+         }
+        
+        stage('Deploy our image') {
+            steps { 
+                script { 
+                    docker.withRegistry('', registryCredential) { 
+	                 imageName.push(commitID())
+
+                        if (env.BRANCH_NAME == 'develop') {
+                           imageName.push('develop')
+                        }
+
+                        if (env.BRANCH_NAME == 'preprod') {
+                            imageName.push('preprod')
+                        }
+
+                        if (env.BRANCH_NAME == 'master') {
+                            imageName.push('latest')
+                        }
+
+              }
+            } 
+          }
+        }      
+          
+        stage("Deploy - Dev") {
+            steps { deploy('dev') }
+	}   
+	      
+       stage("Approve") {
+          steps { approve() }
+       }
+     
+	      
+	      
+     }
+ }
+
+
+def deploy(environment) {
+
+	def containerName = ''
+	def port = ''
+
+	if ("${environment}" == 'dev') {
+		containerName = "app_dev"
+		port = "8888"
+	} 
+	else if ("${environment}" == 'stage') {
+		containerName = "app_stage"
+		port = "88"
+	}
+	else if ("${environment}" == 'live') {
+		containerName = "app_live"
+		port = "80"
+	}
+	else {
+		println "Environment not valid"
+		System.exit(0)
+	}
+        	
+	sh "docker ps -f name=${containerName} -q | xargs --no-run-if-empty docker stop"
+	sh "docker ps -a -f name=${containerName} -q | xargs -r docker rm"
+	sh "docker run -d -p ${port}:5000 --name ${containerName} 3036/movies-loader"
+
+}
+
+def approve() {
+
+	timeout(time:1, unit:'DAYS') {
+		input('Do you want to deploy to live?')
+	}
+}
+
+def commitID() {
+    sh 'git rev-parse HEAD > .git/commitID'
+    def commitID = readFile('.git/commitID').trim()
+    sh 'rm .git/commitID'
+    commitID
+}
